@@ -235,6 +235,9 @@ def empty_record() -> dict[str, Any]:
         "lng": None,
         "camp_types": [],
         "max_people": None,
+        # True only when the source gave us a real party limit. When False,
+        # max_people is a house guess and must not silently exclude a result.
+        "capacity_known": False,
         "pets": None,
         "amenities": [],
         "price_min": None,
@@ -279,6 +282,7 @@ def from_recgov(item: dict[str, Any]) -> dict[str, Any] | None:
         price_min = price_max = None
     types = types_from_equipment(equipment, f"{name} {desc}")
     first_come = any("first" in t.lower() or "walk" in t.lower() for t in reserve_types)
+    parsed_people = parse_people(desc)
     rec = empty_record()
     rec.update(
         {
@@ -293,7 +297,8 @@ def from_recgov(item: dict[str, Any]) -> dict[str, Any] | None:
             "lat": lat,
             "lng": lng,
             "camp_types": types,
-            "max_people": parse_people(desc) or 6,
+            "max_people": parsed_people or 6,
+            "capacity_known": parsed_people is not None,
             "pets": parse_pets(desc),
             "amenities": amenities_from_text(desc, equipment),
             "price_min": price_min if price_min is not None else 20,
@@ -357,6 +362,7 @@ def from_ridb(item: dict[str, Any]) -> dict[str, Any] | None:
             "lng": lng,
             "camp_types": types,
             "max_people": parse_people(desc) or 6,
+            "capacity_known": parse_people(desc) is not None,
             "pets": parse_pets(desc),
             "amenities": amenities_from_text(desc),
             "price_min": 20,
@@ -409,6 +415,7 @@ def from_reservecalifornia(
             "lng": lng,
             "camp_types": types,
             "max_people": int(max_people) if max_people else (40 if "group" in types else 8),
+            "capacity_known": bool(max_people),
             "pets": True,
             "amenities": amenities_from_text(f"{name} {parent}"),
             "price_min": price_min,
@@ -452,6 +459,7 @@ def from_cnra(props: dict[str, Any], lat: float, lng: float) -> dict[str, Any] |
             "lng": lng,
             "camp_types": types,
             "max_people": 40 if "group" in types else 8,
+            "capacity_known": False,
             "pets": True,
             "amenities": amenities_from_text(str(props.get("DETAIL") or "")),
             "price_min": price_min,
@@ -492,6 +500,7 @@ def from_private(item: dict[str, Any]) -> dict[str, Any] | None:
             "lng": lng,
             "camp_types": unique_types(list(item.get("camp_types") or ["cabin_glamping"])),
             "max_people": item.get("max_people") or 6,
+            "capacity_known": item.get("max_people") is not None,
             "pets": item.get("pets"),
             "amenities": list(item.get("amenities") or []),
             "price_min": int(item.get("price_min") or 100),
@@ -528,5 +537,14 @@ def merge_federal(recgov: dict[str, Any], ridb: dict[str, Any]) -> dict[str, Any
         merged["price_min"] = recgov.get("price_min")
         merged["price_max"] = recgov.get("price_max")
         merged["price_known"] = True
+    # A confirmed capacity from either source wins over the other's guess.
+    if recgov.get("capacity_known"):
+        merged["max_people"] = recgov.get("max_people")
+        merged["capacity_known"] = True
+    elif ridb.get("capacity_known"):
+        merged["max_people"] = ridb.get("max_people")
+        merged["capacity_known"] = True
+    else:
+        merged["capacity_known"] = False
     merged["source"] = "recreation_gov+ridb"
     return merged

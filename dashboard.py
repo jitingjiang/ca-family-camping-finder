@@ -23,6 +23,10 @@ CITY_NAMES = list(CITIES.keys())
 ROAD_FACTOR = 1.32
 AVG_MPH = 46.0
 
+DATE_MODE_SKIP = "Don't check — just show me the list (fastest)"
+DATE_MODE_CHECK = "Check my nights and show everything"
+DATE_MODE_HIDE_FULL = "Check my nights and hide the full ones"
+
 STATUS_RANK = {
     "available": 0,
     "first_come": 1,
@@ -40,9 +44,9 @@ st.set_page_config(
         "Get Help": None,
         "Report a bug": None,
         "About": (
-            "Local camping planner on your computer. "
-            "A Streamlit Deploy button, if shown, would try to publish this app "
-            "to the internet — you do not need it to search for campgrounds."
+            "A personal California camping planner. It searches a catalog of public "
+            "and private campgrounds and sends you to the official booking site. "
+            "It never logs in, takes payment, or holds a reservation for you."
         ),
     },
 )
@@ -148,13 +152,28 @@ def load_catalog() -> dict[str, Any]:
     return json.loads(CAMPGROUNDS_JSON.read_text(encoding="utf-8"))
 
 
-def price_overlaps(
-    rec: dict[str, Any], price_min: int, price_max: int, require_known: bool
-) -> bool:
+def price_in_range(rec: dict[str, Any], price_min: int, price_max: int) -> bool:
+    """Does this record's nightly range overlap the budget? Unknown prices count as a miss."""
     lo, hi = rec.get("price_min"), rec.get("price_max")
     if lo is None or hi is None:
-        return not require_known
+        return False
     return not (hi < price_min or lo > price_max)
+
+
+def soft_flags(rec: dict[str, Any], *, people: int, price_min: int, price_max: int) -> list[str]:
+    """Reasons this row might not fit, based on data we guessed rather than confirmed.
+
+    These never remove a row — they rank it lower and get shown on the card, because
+    most of the catalog's prices and party limits are house estimates, and silently
+    dropping a real campground on an estimate is worse than showing it with a caveat.
+    """
+    flags: list[str] = []
+    if not rec.get("price_known") and not price_in_range(rec, price_min, price_max):
+        flags.append("Price is our estimate and looks outside your budget")
+    capacity = rec.get("max_people")
+    if not rec.get("capacity_known") and capacity and int(capacity) < people:
+        flags.append(f"Party limit not confirmed (we assume {int(capacity)})")
+    return flags
 
 
 def type_labels(types: list[str]) -> str:
@@ -276,14 +295,19 @@ def filter_catalog(
     *,
     origin: tuple[float, float],
     max_miles: float | None,
-    max_drive_min: int | None,
     people: int,
     price_min: int,
     price_max: int,
-    require_price: bool,
+    confirmed_price_only: bool,
     types: list[str],
     agencies: list[str],
 ) -> list[dict[str, Any]]:
+    """Filter the catalog.
+
+    Hard filters are the things the user chose (agency, camp type, distance) and
+    the things we actually know (a confirmed price, a confirmed party limit).
+    Guessed values only ever set a soft flag — see soft_flags().
+    """
     lat0, lng0 = origin
     rows: list[dict[str, Any]] = []
     for rec in campgrounds:
@@ -295,21 +319,24 @@ def filter_catalog(
         rec_types = rec.get("camp_types") or []
         if types and not any(t in rec_types for t in types):
             continue
-        max_people = rec.get("max_people")
-        if max_people and int(max_people) < people:
+        if confirmed_price_only and not rec.get("price_known"):
             continue
-        if not price_overlaps(rec, price_min, price_max, require_price):
+        max_people = rec.get("max_people")
+        if rec.get("capacity_known") and max_people and int(max_people) < people:
+            continue
+        if rec.get("price_known") and not price_in_range(rec, price_min, price_max):
             continue
         miles = haversine_miles(lat0, lng0, float(lat), float(lng))
-        drive_min, drive_label = estimate_drive(miles)
         if max_miles is not None and miles > max_miles:
             continue
-        if max_drive_min is not None and drive_min > max_drive_min:
-            continue
+        drive_min, drive_label = estimate_drive(miles)
         row = dict(rec)
         row["distance_mi"] = round(miles, 1)
         row["drive_min"] = drive_min
         row["drive_label"] = drive_label
+        row["soft_flags"] = soft_flags(
+            rec, people=people, price_min=price_min, price_max=price_max
+        )
         rows.append(row)
     rows.sort(key=lambda r: (r["distance_mi"], r.get("price_min") or 9999))
     return rows
@@ -320,14 +347,13 @@ def rank_results(
 ) -> list[dict[str, Any]]:
     def key(row: dict[str, Any]) -> tuple:
         distance = row.get("distance_mi") or 9999
-        drive = row.get("drive_min") or 9999
         price = row.get("price_min") or 9999
+        # Rows we only kept on an estimate sink below the ones that actually fit.
+        soft = 1 if row.get("soft_flags") else 0
         if sort_by == "available":
             status = (row.get("availability") or {}).get("status") or "unknown"
-            return (STATUS_RANK.get(status, 9), distance, price)
-        if sort_by == "drive":
-            return (drive, price)
-        return (distance, price)
+            return (soft, STATUS_RANK.get(status, 9), distance, price)
+        return (soft, distance, price)
 
     return sorted(rows, key=key)
 
@@ -368,10 +394,14 @@ def render_card(rec: dict[str, Any], *, from_map: bool = False) -> None:
             st.caption(f"On the booking site, search for **{search_hint}**.")
         if detail:
             st.caption(detail)
+        for flag in rec.get("soft_flags") or []:
+            st.caption(f":orange[Heads up — {flag}. Confirm on the booking page.]")
         with st.expander("Specs and how to book"):
-            st.write(
-                f"**Party:** up to {rec.get('max_people') or '—'} · **{pets_label(rec.get('pets'))}**"
-            )
+            capacity = rec.get("max_people")
+            capacity_text = (
+                f"up to {capacity}" if capacity else "—"
+            ) + ("" if rec.get("capacity_known") else " (our estimate)")
+            st.write(f"**Party:** {capacity_text} · **{pets_label(rec.get('pets'))}**")
             st.write(f"**Amenities:** {amenity_labels(rec.get('amenities') or [])}")
             if rec.get("first_come"):
                 st.write("**Reservable:** first-come / walk-up (no online hold).")
@@ -533,7 +563,10 @@ def main() -> None:
     k2.metric("Federal", f"{by_agency.get('federal', 0):,}")
     k3.metric("State parks", f"{by_agency.get('ca_state_parks', 0):,}")
     k4.metric("Private / glamping", f"{by_agency.get('private', 0):,}")
-    st.caption(f"Catalog generated {generated}. Refresh with `python ca_camping/ingest.py`.")
+    st.caption(
+        f"Campground list last updated {generated[:10]}. "
+        "Prices and party limits marked *est.* are our guesses — the booking site is the truth."
+    )
 
     with st.expander("New to camping? Start here", icon=":material/camping:"):
         st.markdown(
@@ -681,26 +714,22 @@ on a campfire.
                 "Private = their own website; we can’t see if nights are open."
             ),
         )
-        live = st.checkbox(
-            "Look up whether your nights are still open",
-            value=True,
+        date_mode = st.radio(
+            "Checking your nights",
+            [DATE_MODE_SKIP, DATE_MODE_CHECK, DATE_MODE_HIDE_FULL],
+            index=1,
             help=(
-                "After your filters, we ask the official booking sites for each public "
-                "campground in the results. Private stays are not in those systems. "
-                f"A long list can take about a minute (we pause between asks, max {MAX_LIVE_CHECKS})."
+                "Checking asks the official booking sites whether your nights are free at "
+                "each public campground in your results. Private stays are not in those "
+                f"systems. A long list takes about a minute (max {MAX_LIVE_CHECKS} lookups)."
             ),
         )
-        require_price = st.checkbox(
-            "Hide listings without a price estimate",
-            value=False,
-        )
-        only_open = st.checkbox(
-            "Only show places that look open for these nights",
+        confirmed_price_only = st.checkbox(
+            "Only show places with a confirmed price",
             value=False,
             help=(
-                "Off: keep every place that fits the trip, even if these nights are full. "
-                "On: hide public campgrounds we confirmed as fully booked. "
-                "Private stays still appear."
+                "Most state-park and some federal prices are our estimates, not real rates. "
+                "Tick this to see only the ones where the booking system gave us a real price."
             ),
         )
         submitted = st.form_submit_button("Find campgrounds", type="primary")
@@ -722,18 +751,18 @@ on a campfire.
         )
         if origin_warning:
             st.warning(origin_warning)
-        max_drive_min = None
+        live = date_mode != DATE_MODE_SKIP
+        only_open = date_mode == DATE_MODE_HIDE_FULL
         miles_limit = float(max_miles)
         sort_key = "available" if sort_by == "Open sites first" else "closest"
         matches = filter_catalog(
             campgrounds,
             origin=origin,
             max_miles=miles_limit,
-            max_drive_min=max_drive_min,
             people=int(people),
             price_min=int(price[0]),
             price_max=int(price[1]),
-            require_price=require_price,
+            confirmed_price_only=confirmed_price_only,
             types=types,
             agencies=agencies,
         )
@@ -780,40 +809,53 @@ on a campfire.
         st.info("Set your trip above and click **Find campgrounds**.")
         return
 
-    st.subheader(f"{meta.get('count', len(results))} places that fit this trip")
+    soft_n = sum(1 for r in results if r.get("soft_flags"))
+    solid_n = len(results) - soft_n
+    st.subheader(f"{solid_n} places that fit this trip")
     stay = meta.get("stay")
     range_bit = meta.get("range_label") or ""
     if stay and range_bit:
         st.caption(f"{range_bit} · staying **{stay}**")
     elif range_bit:
         st.caption(range_bit)
+    if soft_n:
+        st.caption(
+            f"Plus **{soft_n} more** we kept but couldn't confirm — the price or party "
+            "limit we hold for those is an estimate, so they're listed last and flagged."
+        )
     sort_note = {
         "closest": "Closest first.",
-        "drive": "Closest first.",
         "available": "Open nights first, then closest.",
     }.get(meta.get("sort_by") or "closest", "")
     if not results:
         st.warning("Nothing matched. Try a longer drive, a higher budget, or more camping types.")
         return
-    dates_failed = any(
-        (r.get("availability") or {}).get("network_error") for r in results
+    failed_n = sum(
+        1 for r in results if (r.get("availability") or {}).get("network_error")
     )
-    if dates_failed:
-        st.info(
-            "We couldn’t look up dates this time. "
-            "The list is still your trip matches — open **Book** to check nights."
-        )
     counts = avail_counts(results)
     open_n = counts["available"] + counts["first_come"]
     checked_n = counts["checked"]
     private_n = sum(1 for r in results if r.get("agency") == "private")
-    if meta.get("live") and not dates_failed:
-        if checked_n == 0:
+    if meta.get("live") and failed_n:
+        if checked_n:
+            # Partial failure: say so, but don't throw away the lookups that worked.
             st.info(
-                "These are private or glamping stays — we can’t see their calendars here. "
-                "Open **Book** (or their website) for dates."
+                f"We reached the booking sites for {checked_n} place(s) but not for "
+                f"{failed_n}. Those are marked “Check dates on Book”."
             )
-        elif open_n == 0:
+        else:
+            st.info(
+                "We couldn’t look up dates this time. "
+                "The list is still your trip matches — open **Book** to check nights."
+            )
+    if meta.get("live") and not checked_n and not failed_n:
+        st.info(
+            "These are private or glamping stays — we can’t see their calendars here. "
+            "Open **Book** (or their website) for dates."
+        )
+    if meta.get("live") and checked_n:
+        if open_n == 0:
             extra = ""
             if private_n:
                 extra = (

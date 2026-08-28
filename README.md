@@ -32,6 +32,26 @@ Opens [http://localhost:8502](http://localhost:8502).
 
 A snapshot of `data/campgrounds.json` ships in the repo so the dashboard works before you ingest again.
 
+## Estimates never hide a campground
+
+About half the catalog's nightly prices, and most of its party limits, are house
+estimates rather than real numbers from the booking system. Those estimates **rank**
+a result, they never remove it: a place we can't confirm still shows up, sorted
+below the confirmed matches and flagged on its card. Only a *confirmed* price or
+party limit that misses your search is filtered out.
+
+Records carry `price_known` and `capacity_known` so the app can tell the two apart.
+`capacity_known` is written by `ingest.py` — until you re-run the ingest, every
+party limit is treated as an estimate.
+
+## Tests
+
+```bash
+.venv/bin/python -m pytest test_filters.py -q
+```
+
+Covers the filtering and ranking rules against the shipped catalog. No network.
+
 ## Optional RIDB key
 
 Federal **catalog** data already comes from Recreation.gov search (no key). To also merge the official Recreation Information Database:

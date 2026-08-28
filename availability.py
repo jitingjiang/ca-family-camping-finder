@@ -40,6 +40,9 @@ UNAVAILABLE_STATUSES = {
 MAX_LIVE_CHECKS = 80
 MIN_INTERVAL_SEC = 1.15
 CACHE_TTL_SEC = 180
+# Give up on live lookups only after this many failures in a row (an outage or a
+# block), not after a single flaky request.
+MAX_CONSECUTIVE_ERRORS = 3
 
 _cache: dict[tuple[str, str, str, str], tuple[float, dict[str, Any]]] = {}
 _last_call_at = 0.0
@@ -417,6 +420,7 @@ def check_shortlist(
     )
     out: list[dict[str, Any]] = []
     skip_live = False
+    consecutive_errors = 0
     for cg in campgrounds:
         row = dict(cg)
         system = cg.get("booking_system")
@@ -443,8 +447,14 @@ def check_shortlist(
             row["availability"] = avail
             live_budget -= 1
             checked += 1
+            # One flaky campground shouldn't abandon the rest of the list. Only give up
+            # once several in a row fail, which is what a real outage or block looks like.
             if avail.get("network_error"):
-                skip_live = True
+                consecutive_errors += 1
+                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                    skip_live = True
+            else:
+                consecutive_errors = 0
         elif system == "direct":
             row["availability"] = check_one(cg, check_in, check_out, session=session)
         else:
