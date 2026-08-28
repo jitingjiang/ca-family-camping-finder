@@ -1,6 +1,7 @@
 """Behaviour tests for the filtering and ranking rules.
 
-Run with:  .venv/bin/python -m pytest test_filters.py -q
+Run with:  ./run_tests.sh
+(or ../.venv/bin/python -m pytest test_filters.py -q)
 These are pure functions over the catalog — no network, fast to run.
 """
 

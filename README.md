@@ -68,17 +68,17 @@ party limit is treated as an estimate.
 ## Tests
 
 ```bash
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m pytest test_filters.py -q
+./run_tests.sh
 ```
 
 Covers the filtering and ranking rules against the shipped catalog. No network,
 runs in about a second.
 
-Call the venv's Python by path, as above. A bare `python` can resolve to conda or
-the system install, neither of which has this app's dependencies — the tests import
-`dashboard`, so `streamlit` and `pydeck` must be present even though the functions
-under test are pure.
+`run_tests.sh` finds the project venv the same way `run_dashboard.sh` does, then
+installs [`requirements-dev.txt`](requirements-dev.txt) into it. Use it rather than a
+bare `python -m pytest`: a bare `python` can resolve to conda or the system install,
+neither of which has this app's dependencies — the tests import `dashboard`, so
+`streamlit` and `pydeck` must be present even though the functions under test are pure.
 
 ## Optional RIDB key
 
