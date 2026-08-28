@@ -23,9 +23,12 @@ CITY_NAMES = list(CITIES.keys())
 ROAD_FACTOR = 1.32
 AVG_MPH = 46.0
 
-DATE_MODE_SKIP = "Don't check — just show me the list (fastest)"
-DATE_MODE_CHECK = "Check my nights and show everything"
-DATE_MODE_HIDE_FULL = "Check my nights and hide the full ones"
+DATE_MODE_SKIP = "Don't check — just show the list (fastest)"
+DATE_MODE_CHECK = "Check whether my nights are free (slower)"
+
+# Status values worth colouring in the card's metric row. Everything else stays
+# plain so the four cells read as one consistent row.
+STATUS_COLOR = {"available": "green", "first_come": "green", "full": "red"}
 
 STATUS_RANK = {
     "available": 0,
@@ -199,10 +202,10 @@ def amenity_labels(items: list[str]) -> str:
 
 def pets_label(value: Any) -> str:
     if value is True:
-        return "Pets OK (confirm rules)"
+        return "Pets allowed — check their rules"
     if value is False:
         return "No pets"
-    return "Pets: check listing"
+    return "Pets: check the listing"
 
 
 def listing_link(rec: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -379,9 +382,12 @@ def render_card(rec: dict[str, Any], *, from_map: bool = False) -> None:
             url, search_hint = listing_link(rec)
             if url:
                 st.link_button("Book", url, width="stretch")
+        # All four cells use the same call and weight so the row reads as one
+        # thing; only the status carries colour, since that is the live signal.
         m1, m2, m3, m4 = st.columns(4)
         label, detail = avail_display(avail)
-        m1.markdown(f"**{label}**")
+        color = STATUS_COLOR.get((avail.get("status") or "unknown"))
+        m1.write(f":{color}[{label}]" if color else label)
         price_lo, price_hi = rec.get("price_min"), rec.get("price_max")
         if price_lo is not None:
             suffix = "" if rec.get("price_known") else " est."
@@ -439,8 +445,7 @@ def render_card(rec: dict[str, Any], *, from_map: bool = False) -> None:
                     1,
                     f"Search for **{search_hint or rec.get('name')}**, then pick your dates.",
                 )
-            if rec.get("booking_system") == "direct":
-                steps.insert(0, "This is a private listing — dates are on their website.")
+            # The card already says private dates live on their website — don't repeat it here.
             st.markdown("\n".join(f"{i}. {s}" for i, s in enumerate(steps, 1)))
 
 
@@ -677,6 +682,14 @@ on a campfire.
         c4, c5 = st.columns(2)
         people = c4.number_input("People", min_value=1, max_value=40, value=4)
         price = c5.slider("Nightly budget ($)", 0, 800, (0, 250))
+        confirmed_price_only = st.checkbox(
+            "Only show places with a confirmed price",
+            value=False,
+            help=(
+                "Most state-park and some federal prices are our estimates, not real rates. "
+                "Tick this to see only the ones where the booking system gave us a real price."
+            ),
+        )
         sort_by = st.radio(
             "List order",
             ["Closest", "Open sites first"],
@@ -716,20 +729,13 @@ on a campfire.
         )
         date_mode = st.radio(
             "Checking your nights",
-            [DATE_MODE_SKIP, DATE_MODE_CHECK, DATE_MODE_HIDE_FULL],
+            [DATE_MODE_SKIP, DATE_MODE_CHECK],
             index=1,
             help=(
                 "Checking asks the official booking sites whether your nights are free at "
-                "each public campground in your results. Private stays are not in those "
-                f"systems. A long list takes about a minute (max {MAX_LIVE_CHECKS} lookups)."
-            ),
-        )
-        confirmed_price_only = st.checkbox(
-            "Only show places with a confirmed price",
-            value=False,
-            help=(
-                "Most state-park and some federal prices are our estimates, not real rates. "
-                "Tick this to see only the ones where the booking system gave us a real price."
+                "each public campground in your results, and labels every card. Nothing is "
+                "removed from the list. Private stays are not in those systems. A long list "
+                f"takes about a minute (max {MAX_LIVE_CHECKS} lookups)."
             ),
         )
         submitted = st.form_submit_button("Find campgrounds", type="primary")
@@ -752,7 +758,6 @@ on a campfire.
         if origin_warning:
             st.warning(origin_warning)
         live = date_mode != DATE_MODE_SKIP
-        only_open = date_mode == DATE_MODE_HIDE_FULL
         miles_limit = float(max_miles)
         sort_key = "available" if sort_by == "Open sites first" else "closest"
         matches = filter_catalog(
@@ -778,13 +783,6 @@ on a campfire.
                     "The places below still fit your trip — open **Book** to check nights."
                 )
                 progress.empty()
-            if only_open:
-                matches = [
-                    r
-                    for r in matches
-                    if (r.get("availability") or {}).get("status") != "full"
-                    or r.get("agency") == "private"
-                ]
         st.session_state["results"] = rank_results(matches, sort_by=sort_key)
         _, drive_cut = estimate_drive(float(max_miles))
         range_label = (
@@ -798,7 +796,6 @@ on a campfire.
             "sort_by": sort_key,
             "origin": origin,
             "stay": stay_label(check_in, check_out),
-            "only_open": only_open,
         }
         st.session_state.pop("selected_cg_id", None)
         st.session_state["map_nonce"] = st.session_state.get("map_nonce", 0) + 1
@@ -823,10 +820,6 @@ on a campfire.
             f"Plus **{soft_n} more** we kept but couldn't confirm — the price or party "
             "limit we hold for those is an estimate, so they're listed last and flagged."
         )
-    sort_note = {
-        "closest": "Closest first.",
-        "available": "Open nights first, then closest.",
-    }.get(meta.get("sort_by") or "closest", "")
     if not results:
         st.warning("Nothing matched. Try a longer drive, a higher budget, or more camping types.")
         return
@@ -884,12 +877,8 @@ on a campfire.
                 "(closest first) so a huge search doesn’t take forever. "
                 "Narrow how far you’ll go to check every match."
             )
-        if sort_note:
-            st.caption(sort_note)
     elif not meta.get("live"):
-        st.caption(f"{sort_note} Dates were not looked up. Open **Book** to see calendars.")
-    elif sort_note:
-        st.caption(sort_note)
+        st.caption("Dates were not looked up. Open **Book** to see calendars.")
 
     shown = results[:MAX_LIVE_CHECKS]
     origin_coords = meta.get("origin")
