@@ -2,17 +2,11 @@
 
 A Streamlit trip planner for **California** camping: federal sites (Recreation.gov), CA State Parks (ReserveCalifornia), and a small curated private / glamping list.
 
+**Use it here:** [ca-family-camping-finder-jtjiang.streamlit.app](https://ca-family-camping-finder-jtjiang.streamlit.app/)
+
 Enter people, dates, origin, camping type, and budget. The app filters a catalog, looks up dates on public campgrounds in those results, and sends you to the **official Book** page. It never logs in or completes a reservation.
 
-## Use it on the web (Streamlit Community Cloud)
-
-After this repo is on GitHub:
-
-1. Open [share.streamlit.io](https://share.streamlit.io) and sign in with GitHub.
-2. **Create app** → pick this repository, branch `main`, main file `dashboard.py`.
-3. Deploy. You’ll get a public `*.streamlit.app` link to send to friends.
-
-Community Cloud is **free**. Public GitHub repos can host unlimited public apps. The first visit after a quiet stretch may take a minute while the app wakes up.
+The first visit after a quiet stretch may take a minute while the free Streamlit Cloud app wakes up.
 
 ## Run it on your computer
 
