@@ -8,6 +8,21 @@ Enter people, dates, origin, camping type, and budget. The app filters a catalog
 
 The first visit after a quiet stretch may take a minute while the free Streamlit Cloud app wakes up.
 
+## Versions
+
+| Branch / tag | What it is | Where it runs |
+|---|---|---|
+| `main` | The stable version. This is the link to share. | [ca-family-camping-finder-jtjiang.streamlit.app](https://ca-family-camping-finder-jtjiang.streamlit.app/) |
+| `v2` | Work in progress, merged into `main` when it's ready. | A second Streamlit Cloud app deployed from this branch |
+| `v1.0` (tag) | Frozen marker for the first working version. | — |
+
+Each Streamlit Cloud app watches one branch, so pushing to `v2` rebuilds only the
+staging app and never touches the live one. To release:
+
+```bash
+git checkout main && git merge v2 && git push
+```
+
 ## Run it on your computer
 
 ```bash
@@ -17,6 +32,12 @@ python3 -m venv .venv
 ```
 
 Opens [http://localhost:8502](http://localhost:8502).
+
+Use the project `.venv` for tests too — plain `python -m pytest` often hits conda and misses `pydeck`:
+
+```bash
+./run_tests.sh
+```
 
 ## Refresh the catalog vs search
 
@@ -47,10 +68,17 @@ party limit is treated as an estimate.
 ## Tests
 
 ```bash
+.venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/python -m pytest test_filters.py -q
 ```
 
-Covers the filtering and ranking rules against the shipped catalog. No network.
+Covers the filtering and ranking rules against the shipped catalog. No network,
+runs in about a second.
+
+Call the venv's Python by path, as above. A bare `python` can resolve to conda or
+the system install, neither of which has this app's dependencies — the tests import
+`dashboard`, so `streamlit` and `pydeck` must be present even though the functions
+under test are pure.
 
 ## Optional RIDB key
 
@@ -68,14 +96,14 @@ Do not commit `.env`.
 - **ReserveCalifornia** (CA State Parks): read-only unit grid.
 - **Private / glamping**: catalog only. Open their website for dates.
 
-Live check waits ~1 second between requests and caps at 80 public campgrounds per search. If an endpoint is blocked or flaky, rows still appear with a **Book** button.
+Live check waits ~1 second between requests and caps at 80 public campgrounds per search. A one-off failure is tolerated and reported as such; only a run of consecutive failures — an outage or a block — stops the remaining lookups. Either way rows still appear with a **Book** button.
 
 We do **not** snipe cancellations, log in, or place reservations.
 
 ## Honest limits
 
 - **Distance** is map (straight-line) miles. **Drive time** is an estimate from that (roads wind; no live traffic).
-- Public-land nightly prices are often estimates. Confirm on the booking page.
+- About half the nightly prices, and most party limits, are estimates rather than real numbers — see [Estimates never hide a campground](#estimates-never-hide-a-campground). Confirm on the booking page.
 - Reservation windows (usually ~6 months rolling) matter more than this app. Popular sites vanish in minutes.
 - Yosemite and some parks add lotteries or timed entry on top of a campsite.
 - This is a personal planner, not Recreation.gov, ReserveCalifornia, or Hipcamp.
