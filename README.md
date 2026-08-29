@@ -6,36 +6,7 @@ A Streamlit trip planner for **California** camping: federal sites (Recreation.g
 
 Enter people, dates, origin, camping type, and budget. The app filters a catalog, looks up dates on public campgrounds in those results, and sends you to the **official Book** page. It never logs in or completes a reservation.
 
-The first visit after a quiet stretch may take a minute while the free Streamlit Cloud app wakes up.
-
-## Versions
-
-| Branch / tag | What it is | Where it runs |
-|---|---|---|
-| `main` | The stable version. This is the link to share. | [ca-family-camping-finder-jtjiang.streamlit.app](https://ca-family-camping-finder-jtjiang.streamlit.app/) |
-| `v2` | Work in progress, merged into `main` when it's ready. | A second Streamlit Cloud app deployed from this branch |
-| `v1.0` (tag) | Frozen marker for the first working version. | — |
-
-Each Streamlit Cloud app watches one branch, so pushing to `v2` rebuilds only the
-staging app and never touches the live one. To release:
-
-```bash
-git checkout main && git merge v2 && git push
-```
-
-## Refreshing the catalog
-
-The campground list is a snapshot committed to the repo, not a live feed. Availability
-is fetched live on every search, but names, prices and party limits only change when
-someone re-runs the ingest — worth doing a couple of times a year.
-
-```bash
-.venv/bin/python ingest.py
-```
-
-It refuses to overwrite the catalog if the new one lost more than 20% of its records
-overall or in any one agency, since a source that times out mid-run returns a short
-list rather than an error. `--force` overrides when the drop is real.
+**Note:** The campground **list** is a snapshot in this repo (refresh with `ingest.py` a couple of times a year). **Availability** is fetched live on each search.
 
 ## Data sources
 
