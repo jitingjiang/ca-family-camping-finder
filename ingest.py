@@ -373,13 +373,82 @@ def build_catalog(session: requests.Session) -> list[dict[str, Any]]:
     return catalog
 
 
-def write_catalog(records: list[dict[str, Any]]) -> None:
+# A source that times out mid-run produces a short catalog rather than an error, so
+# compare against what is already on disk and refuse a suspicious drop. Checked per
+# agency as well as overall: losing every state park still leaves ~57% of the total,
+# which a whole-catalog threshold on its own would wave through.
+SHRINK_LIMIT = 0.8
+
+
+def previous_counts() -> tuple[int, dict[str, int]] | None:
+    """(total, by_agency) from the catalog already on disk, or None if there isn't one."""
+    if not CAMPGROUNDS_JSON.exists():
+        return None
+    try:
+        payload = json.loads(CAMPGROUNDS_JSON.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    records = payload.get("campgrounds")
+    if not isinstance(records, list) or not records:
+        return None
+    total = int(payload.get("campground_count") or len(records))
+    by_agency = payload.get("by_agency")
+    if not isinstance(by_agency, dict):
+        by_agency = {}
+        for rec in records:
+            key = rec.get("agency") or "unknown"
+            by_agency[key] = by_agency.get(key, 0) + 1
+    return total, {str(k): int(v) for k, v in by_agency.items()}
+
+
+def shrink_warnings(new_total: int, new_agencies: dict[str, int]) -> list[str]:
+    """Ways this catalog looks like a failed run rather than a real change."""
+    previous = previous_counts()
+    if previous is None:
+        return []
+    old_total, old_agencies = previous
+    problems: list[str] = []
+    if new_total < old_total * SHRINK_LIMIT:
+        problems.append(
+            f"total {old_total} -> {new_total} ({new_total / old_total:.0%} of before)"
+        )
+    for agency, old_count in sorted(old_agencies.items()):
+        if old_count <= 0:
+            continue
+        new_count = new_agencies.get(agency, 0)
+        if new_count < old_count * SHRINK_LIMIT:
+            problems.append(
+                f"{agency} {old_count} -> {new_count} "
+                f"({new_count / old_count:.0%} of before)"
+            )
+    return problems
+
+
+def write_catalog(records: list[dict[str, Any]], force: bool = False) -> bool:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     agencies: dict[str, int] = {}
     for rec in records:
         agencies[rec.get("agency") or "unknown"] = (
             agencies.get(rec.get("agency") or "unknown", 0) + 1
         )
+
+    problems = shrink_warnings(len(records), agencies)
+    if problems and not force:
+        print("Refusing to overwrite the catalog — this run looks incomplete:", file=sys.stderr)
+        for line in problems:
+            print(f"  {line}", file=sys.stderr)
+        print(
+            f"\nA source probably timed out or blocked us. The existing "
+            f"{CAMPGROUNDS_JSON.name} is untouched — try again in a while.\n"
+            f"If the drop is real, re-run with --force to write it anyway.",
+            file=sys.stderr,
+        )
+        return False
+    if problems:
+        print("--force given, writing a shrunken catalog anyway:", file=sys.stderr)
+        for line in problems:
+            print(f"  {line}", file=sys.stderr)
+
     payload = {
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "campground_count": len(records),
@@ -392,17 +461,24 @@ def write_catalog(records: list[dict[str, Any]]) -> None:
     print(f"Wrote {len(records)} campgrounds → {CAMPGROUNDS_JSON}")
     for agency, count in sorted(agencies.items()):
         print(f"  {agency}: {count}")
+    return True
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Ingest a CA camping catalog.")
-    parser.parse_args()
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Write the catalog even if it shrank enough to look like a failed run.",
+    )
+    args = parser.parse_args()
     session = make_session()
     records = build_catalog(session)
     if not records:
         print("No campgrounds ingested.", file=sys.stderr)
         return 1
-    write_catalog(records)
+    if not write_catalog(records, force=args.force):
+        return 1
     return 0
 
 

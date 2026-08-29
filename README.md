@@ -23,6 +23,20 @@ staging app and never touches the live one. To release:
 git checkout main && git merge v2 && git push
 ```
 
+## Refreshing the catalog
+
+The campground list is a snapshot committed to the repo, not a live feed. Availability
+is fetched live on every search, but names, prices and party limits only change when
+someone re-runs the ingest — worth doing a couple of times a year.
+
+```bash
+.venv/bin/python ingest.py
+```
+
+It refuses to overwrite the catalog if the new one lost more than 20% of its records
+overall or in any one agency, since a source that times out mid-run returns a short
+list rather than an error. `--force` overrides when the drop is real.
+
 ## Data sources
 
 - [Recreation.gov](https://www.recreation.gov/) campground search + availability JSON
