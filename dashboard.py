@@ -285,7 +285,7 @@ def avail_display(avail: dict[str, Any] | None) -> tuple[str, str | None]:
     if status == "lottery":
         return "Lottery", "This one uses a drawing. Check the listing for rules."
     if status == "check_site":
-        return "See their website", "Private listing — dates are on their website, not here."
+        return "See their website", "Dates are on their website."
     return "Check dates on Book", None
 
 
@@ -387,17 +387,18 @@ def render_card(rec: dict[str, Any], *, from_map: bool = False) -> None:
         m1, m2, m3, m4 = st.columns(4)
         label, detail = avail_display(avail)
         color = STATUS_COLOR.get((avail.get("status") or "unknown"))
-        m1.write(f":{color}[{label}]" if color else label)
+        m1.markdown(f":{color}[{label}]" if color else label)
         price_lo, price_hi = rec.get("price_min"), rec.get("price_max")
         if price_lo is not None:
             suffix = "" if rec.get("price_known") else " est."
-            m2.write(f"${price_lo}–${price_hi}/night{suffix}")
+            # Unescaped $ is treated as LaTeX, so price looked like a different font than type.
+            m2.markdown(f"\\${price_lo}–\\${price_hi}/night{suffix}")
         else:
-            m2.write("Price on booking page")
-        m3.write(type_labels(rec.get("camp_types") or []))
-        m4.write(BOOKING_LABELS.get(rec.get("booking_system") or "", ""))
+            m2.markdown("Price on booking page")
+        m3.markdown(type_labels(rec.get("camp_types") or []))
+        m4.markdown(BOOKING_LABELS.get(rec.get("booking_system") or "", "") or "—")
         if search_hint:
-            st.caption(f"On the booking site, search for **{search_hint}**.")
+            st.caption(f"On Book, search for **{search_hint}**.")
         if detail:
             st.caption(detail)
         for flag in rec.get("soft_flags") or []:
@@ -425,7 +426,7 @@ def render_card(rec: dict[str, Any], *, from_map: bool = False) -> None:
             site = rec.get("website") or ""
             if rec.get("booking_system") == "reservecalifornia" and search_hint:
                 st.markdown(
-                    f"**Reserve:** [Open ReserveCalifornia]({book}) — search for **{search_hint}**."
+                    f"**Reserve:** [Open ReserveCalifornia]({book}) — on Book, search for **{search_hint}**."
                 )
             elif book:
                 st.markdown(f"**Reserve:** [Open listing]({book})")
@@ -443,7 +444,7 @@ def render_card(rec: dict[str, Any], *, from_map: bool = False) -> None:
             if rec.get("booking_system") == "reservecalifornia":
                 steps.insert(
                     1,
-                    f"Search for **{search_hint or rec.get('name')}**, then pick your dates.",
+                    f"On Book, search for **{search_hint or rec.get('name')}**, then pick your dates.",
                 )
             # The card already says private dates live on their website — don't repeat it here.
             st.markdown("\n".join(f"{i}. {s}" for i, s in enumerate(steps, 1)))
@@ -681,7 +682,9 @@ on a campfire.
             )
         c4, c5 = st.columns(2)
         people = c4.number_input("People", min_value=1, max_value=40, value=4)
+        c4.caption("Most party limits are estimated.")
         price = c5.slider("Nightly budget ($)", 0, 800, (0, 250))
+        c5.caption("Many prices are estimated.")
         confirmed_price_only = st.checkbox(
             "Only show places with a confirmed price",
             value=False,
